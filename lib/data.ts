@@ -87,6 +87,138 @@ export async function fetchFilteredCourses(
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// 단일 fetch로 모든 대시보드 메트릭을 한번에 계산
+// page.tsx에서 7개 함수를 개별 호출하던 것을 이 함수 하나로 대체
+// ─────────────────────────────────────────────────────────────
+export async function getAllDashboardData(
+  college?: string | null,
+  department?: string | null,
+) {
+  const courses = await fetchFilteredCourses(college, department)
+  const total = courses.length
+
+  // ── 통계 카드 ──
+  let enrollmentSum = 0, attendanceSum = 0, attendanceCount = 0, foreignCount = 0
+  courses.forEach(c => {
+    enrollmentSum += c.수강 || 0
+    const limit = c.정원 || 0, current = c.수강 || 0
+    if (limit > 0) { attendanceSum += (current / limit) * 100; attendanceCount++ }
+    if (c.원어강의 === 'Y' || c.원어강의 === '원어') foreignCount++
+  })
+  const stats = {
+    totalCourses: total,
+    totalEnrollment: enrollmentSum,
+    avgAttendanceRate: attendanceCount > 0 ? attendanceSum / attendanceCount : 0,
+    foreignLectureRate: total > 0 ? (foreignCount / total) * 100 : 0,
+  }
+
+  // ── 이수구분 ──
+  const catCountMap: Record<string, number> = {}
+  const catSumMap: Record<string, number> = {}
+  const catCntMap: Record<string, number> = {}
+  courses.forEach(c => {
+    const cat = c.이수구분 || '기타'
+    catCountMap[cat] = (catCountMap[cat] || 0) + 1
+    catSumMap[cat] = (catSumMap[cat] || 0) + (c.수강 || 0)
+    catCntMap[cat] = (catCntMap[cat] || 0) + 1
+  })
+  const categoryCounts = Object.entries(catCountMap).map(([category, count]) => ({ category, count }))
+  const categoryAvgEnrollments = Object.keys(catSumMap).map(category => ({
+    category,
+    avgEnrollment: parseFloat((catSumMap[category] / catCntMap[category]).toFixed(1)),
+  }))
+
+  // ── 수업방법 ──
+  const methodMap: Record<string, number> = {}
+  courses.forEach(c => { const m = c.수업방법 || '미지정'; methodMap[m] = (methodMap[m] || 0) + 1 })
+  const teachingMethods = Object.entries(methodMap).map(([name, value]) => ({ name, value }))
+
+  // ── 학점 분포 ──
+  const creditMap: Record<string, number> = {}
+  courses.forEach(c => {
+    const cr = c.학점 != null ? `${c.학점}학점` : '미지정'
+    creditMap[cr] = (creditMap[cr] || 0) + 1
+  })
+  const creditDistribution = Object.entries(creditMap).map(([name, value]) => ({ name, value }))
+
+  // ── 요일별 ──
+  const DAYS = ['월', '화', '수', '목', '금', '토']
+  const dayMap: Record<string, number> = Object.fromEntries(DAYS.map(d => [d, 0]))
+  courses.forEach(c => {
+    const s = (c as any)['시간표(교시)'] || ''
+    DAYS.forEach(d => { if (s.includes(d)) dayMap[d]++ })
+  })
+  const coursesByDay = DAYS.map(day => ({ day, count: dayMap[day] }))
+
+  // ── 시간대별 ──
+  const timeGroups = [
+    { name: '9시 이전',    min: 0,       max: 8 * 60 + 59, count: 0 },
+    { name: '09:00-10:59', min: 9 * 60,  max: 10 * 60 + 59, count: 0 },
+    { name: '11:00-12:59', min: 11 * 60, max: 12 * 60 + 59, count: 0 },
+    { name: '13:00-14:59', min: 13 * 60, max: 14 * 60 + 59, count: 0 },
+    { name: '15:00-16:59', min: 15 * 60, max: 16 * 60 + 59, count: 0 },
+    { name: '17:00 이후',  min: 17 * 60, max: 24 * 60,       count: 0 },
+  ]
+  courses.forEach(c => {
+    const m = ((c as any)['시간표(시간)'] || '').match(/(\d{2}):(\d{2})/)
+    if (m) {
+      const mins = parseInt(m[1]) * 60 + parseInt(m[2])
+      for (const g of timeGroups) { if (mins >= g.min && mins <= g.max) { g.count++; break } }
+    }
+  })
+  const coursesByTime = timeGroups.map(g => ({ timeRange: g.name, count: g.count }))
+
+  // ── 시간표 히트맵 ──
+  const GRID_DAYS = ['월', '화', '수', '목', '금']
+  const HOURS = [9,10,11,12,13,14,15,16,17,18,19,20]
+  const grid: Record<string, Record<number, number>> = {}
+  GRID_DAYS.forEach(d => { grid[d] = {}; HOURS.forEach(h => { grid[d][h] = 0 }) })
+  courses.forEach(c => {
+    const s = (c as any)['시간표(시간)'] ?? ''
+    const segs = [...s.matchAll(/([월화수목금토])([^월화수목금토]*)/g)]
+    for (const seg of segs) {
+      const day = seg[1]; if (!grid[day]) continue
+      for (const t of [...seg[2].matchAll(/\((\d{2}):(\d{2})/g)]) {
+        const h = parseInt(t[1]); if (grid[day][h] !== undefined) grid[day][h]++
+      }
+    }
+  })
+  const timetableGrid = HOURS.map(hour => ({
+    hour, 월: grid['월'][hour], 화: grid['화'][hour],
+    수: grid['수'][hour], 목: grid['목'][hour], 금: grid['금'][hour],
+  }))
+
+  // ── 수강률 이상 강좌 ──
+  const withRate = courses
+    .filter(c => (c.정원 || 0) > 0)
+    .map(c => ({
+      교과목명: c.교과목명,
+      학과: (c as any)['학과(부)'] as string,
+      담당교수: c.담당교수,
+      수강: c.수강 || 0,
+      정원: c.정원 || 0,
+      rate: ((c.수강 || 0) / (c.정원 || 1)) * 100,
+    }))
+  const overEnrolled = withRate.filter(c => c.rate > 100).sort((a, b) => b.rate - a.rate)
+  const underEnrolled = withRate.filter(c => c.rate < 50).sort((a, b) => a.rate - b.rate)
+
+  return {
+    stats,
+    categoryCounts,
+    categoryAvgEnrollments,
+    teachingMethods,
+    creditDistribution,
+    coursesByDay,
+    coursesByTime,
+    timetableGrid,
+    enrollmentAlerts: {
+      overEnrolled, overTotal: overEnrolled.length,
+      underEnrolled, underTotal: underEnrolled.length,
+    },
+  }
+}
+
 export async function getStats(college?: string | null, department?: string | null) {
   const courses = await fetchFilteredCourses(college, department)
   

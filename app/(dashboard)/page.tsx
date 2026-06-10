@@ -12,17 +12,9 @@ import TimetableGrid from '@/components/TimetableGrid'
 import EnrollmentAlerts from '@/components/EnrollmentAlerts'
 import CourseTable from '@/components/CourseTable'
 import {
-  getStats,
-  getCoursesByCategory,
-  getAvgEnrollmentByCategory,
-  getTeachingMethods,
-  getCreditDistribution,
-  getCoursesByDay,
-  getCoursesByTime,
+  getAllDashboardData,
   getCollegeSummary,
   getTopDeptsByCollege,
-  getTimetableGrid,
-  getEnrollmentAlerts,
   getCourses,
 } from '@/lib/data'
 
@@ -75,72 +67,38 @@ export default function DashboardPage() {
   }, [])
 
   // Load metrics when dashboard selection changes
+  // 모든 대시보드 데이터를 단일 fetch로 로드 (성능 최적화)
   useEffect(() => {
-    const loadMetricsData = async () => {
-      if (isInitialMetrics) {
-        setMetricsLoading(true)
-      }
-      try {
-        const [
-          statsData,
-          countsData,
-          avgEnrollmentData,
-          methodsData,
-          creditsData,
-          dayData,
-          timeData,
-        ] = await Promise.all([
-          getStats(selectedCollege, selectedDepartment),
-          getCoursesByCategory(selectedCollege, selectedDepartment),
-          getAvgEnrollmentByCategory(selectedCollege, selectedDepartment),
-          getTeachingMethods(selectedCollege, selectedDepartment),
-          getCreditDistribution(selectedCollege, selectedDepartment),
-          getCoursesByDay(selectedCollege, selectedDepartment),
-          getCoursesByTime(selectedCollege, selectedDepartment),
-        ])
-
-        setStats(statsData)
-        setCategoryCounts(countsData)
-        setCategoryAvgEnrollments(avgEnrollmentData)
-        setTeachingMethods(methodsData)
-        setCreditDistribution(creditsData)
-        setCoursesByDay(dayData)
-        setCoursesByTime(timeData)
-      } catch (err) {
-        console.error('Failed to load dashboard metrics:', err)
-      } finally {
-        setMetricsLoading(false)
-        setIsInitialMetrics(false)
-      }
-    }
-
-    loadMetricsData()
-    setCoursePage(1)
-    setCategoryFilter(null)
-    setDayFilter(null)
-    setTimeFilter(null)
-  }, [selectedCollege, selectedDepartment])
-
-  // 시간표 그리드 + 수강률 이상 강좌 로드
-  useEffect(() => {
-    const load = async () => {
+    const loadAll = async () => {
+      if (isInitialMetrics) setMetricsLoading(true)
       setTimetableLoading(true)
       setAlertsLoading(true)
       try {
-        const [timetable, alerts] = await Promise.all([
-          getTimetableGrid(selectedCollege, selectedDepartment),
-          getEnrollmentAlerts(selectedCollege, selectedDepartment),
-        ])
-        setTimetableData(timetable)
-        setAlertsData(alerts)
+        const d = await getAllDashboardData(selectedCollege, selectedDepartment)
+        setStats(d.stats)
+        setCategoryCounts(d.categoryCounts)
+        setCategoryAvgEnrollments(d.categoryAvgEnrollments)
+        setTeachingMethods(d.teachingMethods)
+        setCreditDistribution(d.creditDistribution)
+        setCoursesByDay(d.coursesByDay)
+        setCoursesByTime(d.coursesByTime)
+        setTimetableData(d.timetableGrid)
+        setAlertsData(d.enrollmentAlerts)
       } catch (err) {
-        console.error('Failed to load timetable/alerts:', err)
+        console.error('Failed to load dashboard data:', err)
       } finally {
+        setMetricsLoading(false)
+        setIsInitialMetrics(false)
         setTimetableLoading(false)
         setAlertsLoading(false)
       }
     }
-    load()
+
+    loadAll()
+    setCoursePage(1)
+    setCategoryFilter(null)
+    setDayFilter(null)
+    setTimeFilter(null)
   }, [selectedCollege, selectedDepartment])
 
   // 단과대 선택 시 상위 학과 데이터 로드
