@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDashboard } from '@/contexts/DashboardContext'
 import StatsCards from '@/components/StatsCards'
 import CategoryCharts from '@/components/CategoryCharts'
@@ -12,143 +12,72 @@ import TimetableGrid from '@/components/TimetableGrid'
 import EnrollmentAlerts from '@/components/EnrollmentAlerts'
 import CourseTable from '@/components/CourseTable'
 import {
-  getAllDashboardData,
-  getCollegeSummary,
-  getTopDeptsByCollege,
-  getCourses,
-} from '@/lib/data'
+  filterCourses,
+  computeStats,
+  computeCategoryCounts,
+  computeCategoryAvgEnrollments,
+  computeTeachingMethods,
+  computeCreditDistribution,
+  computeCoursesByDay,
+  computeCoursesByTime,
+  computeTimetableGrid,
+  computeEnrollmentAlerts,
+  computeCollegeSummary,
+  computeTopDepts,
+  filterAndPaginateCourses,
+} from '@/lib/compute'
+
+const PAGE_SIZE = 10
 
 export default function DashboardPage() {
-  const { selectedCollege, selectedDepartment } = useDashboard()
-  const [metricsLoading, setMetricsLoading] = useState(true)
-  const [summaryLoading, setSummaryLoading] = useState(true)
-  const [tableLoading, setTableLoading] = useState(true)
-  const [isInitialMetrics, setIsInitialMetrics] = useState(true)
-  
-  // Dashboard overall data states
-  const [stats, setStats] = useState<any>(null)
-  const [categoryCounts, setCategoryCounts] = useState<any[]>([])
-  const [categoryAvgEnrollments, setCategoryAvgEnrollments] = useState<any[]>([])
-  const [teachingMethods, setTeachingMethods] = useState<any[]>([])
-  const [creditDistribution, setCreditDistribution] = useState<any[]>([])
-  const [coursesByDay, setCoursesByDay] = useState<any[]>([])
-  const [coursesByTime, setCoursesByTime] = useState<any[]>([])
-  const [collegeSummary, setCollegeSummary] = useState<any[]>([])
-  const [topDepts, setTopDepts] = useState<any[]>([])
-  const [topDeptsLoading, setTopDeptsLoading] = useState(false)
-  const [timetableData, setTimetableData] = useState<any[]>([])
-  const [timetableLoading, setTimetableLoading] = useState(true)
-  const [alertsData, setAlertsData] = useState<{ overEnrolled: any[]; overTotal: number; underEnrolled: any[]; underTotal: number }>({ overEnrolled: [], overTotal: 0, underEnrolled: [], underTotal: 0 })
-  const [alertsLoading, setAlertsLoading] = useState(true)
+  const { selectedCollege, selectedDepartment, allCourses, coursesLoading } = useDashboard()
 
-  // Course table states
-  const [courses, setCourses] = useState<any[]>([])
-  const [totalCoursesCount, setTotalCoursesCount] = useState(0)
+  // 필터 상태
   const [coursePage, setCoursePage] = useState(1)
   const [courseSearch, setCourseSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
   const [timeFilter, setTimeFilter] = useState<string | null>(null)
 
-  // Load static summary and initial metrics
-  useEffect(() => {
-    const loadStaticData = async () => {
-      setSummaryLoading(true)
-      try {
-        const summaryData = await getCollegeSummary()
-        setCollegeSummary(summaryData)
-      } catch (err) {
-        console.error('Failed to load college summary:', err)
-      } finally {
-        setSummaryLoading(false)
-      }
-    }
-    loadStaticData()
-  }, [])
-
-  // Load metrics when dashboard selection changes
-  // 모든 대시보드 데이터를 단일 fetch로 로드 (성능 최적화)
-  useEffect(() => {
-    const loadAll = async () => {
-      if (isInitialMetrics) setMetricsLoading(true)
-      setTimetableLoading(true)
-      setAlertsLoading(true)
-      try {
-        const d = await getAllDashboardData(selectedCollege, selectedDepartment)
-        setStats(d.stats)
-        setCategoryCounts(d.categoryCounts)
-        setCategoryAvgEnrollments(d.categoryAvgEnrollments)
-        setTeachingMethods(d.teachingMethods)
-        setCreditDistribution(d.creditDistribution)
-        setCoursesByDay(d.coursesByDay)
-        setCoursesByTime(d.coursesByTime)
-        setTimetableData(d.timetableGrid)
-        setAlertsData(d.enrollmentAlerts)
-      } catch (err) {
-        console.error('Failed to load dashboard data:', err)
-      } finally {
-        setMetricsLoading(false)
-        setIsInitialMetrics(false)
-        setTimetableLoading(false)
-        setAlertsLoading(false)
-      }
-    }
-
-    loadAll()
-    setCoursePage(1)
+  // 대학/학과 변경 시 필터 초기화
+  const prevKey = useMemo(() => `${selectedCollege}::${selectedDepartment}`, [selectedCollege, selectedDepartment])
+  useMemo(() => {
     setCategoryFilter(null)
     setDayFilter(null)
     setTimeFilter(null)
-  }, [selectedCollege, selectedDepartment])
+    setCoursePage(1)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevKey])
 
-  // 단과대 선택 시 상위 학과 데이터 로드
-  useEffect(() => {
-    if (!selectedCollege || selectedDepartment) {
-      setTopDepts([])
-      return
-    }
-    const load = async () => {
-      setTopDeptsLoading(true)
-      try {
-        const data = await getTopDeptsByCollege(selectedCollege)
-        setTopDepts(data)
-      } catch (err) {
-        console.error('Failed to load top depts:', err)
-      } finally {
-        setTopDeptsLoading(false)
-      }
-    }
-    load()
-  }, [selectedCollege, selectedDepartment])
+  // ── 선택된 대학/학과로 필터링 ──
+  const filteredCourses = useMemo(
+    () => filterCourses(allCourses, selectedCollege, selectedDepartment),
+    [allCourses, selectedCollege, selectedDepartment]
+  )
 
-  // Load paginated course list when filters, page, or search changes
-  useEffect(() => {
-    const loadTableData = async () => {
-      setTableLoading(true)
-      try {
-        const result = await getCourses(
-          selectedCollege,
-          selectedDepartment,
-          coursePage,
-          10,
-          courseSearch,
-          categoryFilter,
-          dayFilter,
-          timeFilter,
-        )
-        setCourses(result.courses)
-        setTotalCoursesCount(result.total)
-      } catch (err) {
-        console.error('Failed to load courses list:', err)
-      } finally {
-        setTableLoading(false)
-      }
-    }
+  // ── 메트릭 계산 (즉시, 네트워크 없음) ──
+  const stats             = useMemo(() => computeStats(filteredCourses), [filteredCourses])
+  const categoryCounts    = useMemo(() => computeCategoryCounts(filteredCourses), [filteredCourses])
+  const categoryAvg       = useMemo(() => computeCategoryAvgEnrollments(filteredCourses), [filteredCourses])
+  const teachingMethods   = useMemo(() => computeTeachingMethods(filteredCourses), [filteredCourses])
+  const creditDistribution= useMemo(() => computeCreditDistribution(filteredCourses), [filteredCourses])
+  const coursesByDay      = useMemo(() => computeCoursesByDay(filteredCourses), [filteredCourses])
+  const coursesByTime     = useMemo(() => computeCoursesByTime(filteredCourses), [filteredCourses])
+  const timetableGrid     = useMemo(() => computeTimetableGrid(filteredCourses), [filteredCourses])
+  const enrollmentAlerts  = useMemo(() => computeEnrollmentAlerts(filteredCourses), [filteredCourses])
+  const collegeSummary    = useMemo(() => computeCollegeSummary(allCourses), [allCourses])
+  const topDepts          = useMemo(
+    () => selectedCollege && !selectedDepartment ? computeTopDepts(filteredCourses) : [],
+    [filteredCourses, selectedCollege, selectedDepartment]
+  )
 
-    loadTableData()
-  }, [selectedCollege, selectedDepartment, coursePage, courseSearch, categoryFilter, dayFilter, timeFilter])
+  // ── 상세 강좌 테이블 (검색·필터·페이지네이션 모두 클라이언트) ──
+  const { courses, total: totalCoursesCount } = useMemo(
+    () => filterAndPaginateCourses(filteredCourses, courseSearch, coursePage, PAGE_SIZE, categoryFilter, dayFilter, timeFilter),
+    [filteredCourses, courseSearch, coursePage, categoryFilter, dayFilter, timeFilter]
+  )
 
-  // Dynamic Page Title
+  // ── 동적 제목 ──
   const title = selectedDepartment
     ? `${selectedDepartment} 교과목 대시보드`
     : selectedCollege
@@ -161,111 +90,126 @@ export default function DashboardPage() {
     ? `${selectedCollege} 소속 학과 교과목의 운영 현황 통계`
     : '인천대학교 2026학년도 1학기 전체 교과목의 운영 현황 통계'
 
+  const handleCategoryClick = (cat: string) => {
+    setCategoryFilter(p => p === cat ? null : cat)
+    setCoursePage(1)
+    document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const handleDayClick = (day: string) => {
+    setDayFilter(p => p === day ? null : day)
+    setCoursePage(1)
+    document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const handleTimeClick = (tr: string) => {
+    setTimeFilter(p => p === tr ? null : tr)
+    setCoursePage(1)
+    document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
     <div className="flex-1 space-y-6 p-6 md:p-8 max-w-7xl w-full mx-auto">
-      {/* Page Title */}
+      {/* 페이지 제목 */}
       <div className="space-y-1">
         <h2 className="text-2xl font-bold tracking-tight text-slate-800">{title}</h2>
         <p className="text-sm text-slate-500">{subtitle}</p>
       </div>
 
-      {/* Stats Cards */}
-      <StatsCards stats={stats} loading={metricsLoading} />
+      {/* 통계 카드 */}
+      <StatsCards stats={coursesLoading ? null : stats} loading={coursesLoading} />
 
-      {/* Category Charts */}
+      {/* 이수구분 차트 */}
       <CategoryCharts
         categoryCounts={categoryCounts}
-        categoryAvgEnrollments={categoryAvgEnrollments}
-        loading={metricsLoading}
+        categoryAvgEnrollments={categoryAvg}
+        loading={coursesLoading}
         activeCategory={categoryFilter}
-        onCategoryClick={(cat) => {
-          setCategoryFilter((prev) => (prev === cat ? null : cat))
-          setCoursePage(1)
-          document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }}
+        onCategoryClick={handleCategoryClick}
       />
 
-      {/* Distribution Charts */}
+      {/* 수업방법·학점 도넛 차트 */}
       <DistributionCharts
         teachingMethods={teachingMethods}
         creditDistribution={creditDistribution}
-        loading={metricsLoading}
+        loading={coursesLoading}
       />
 
-      {/* Time Charts */}
+      {/* 요일·시간 차트 */}
       <TimeCharts
         coursesByDay={coursesByDay}
         coursesByTime={coursesByTime}
-        loading={metricsLoading}
+        loading={coursesLoading}
         activeDay={dayFilter}
         activeTime={timeFilter}
-        onDayClick={(day) => { setDayFilter(p => p === day ? null : day); setCoursePage(1); document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
-        onTimeClick={(tr) => { setTimeFilter(p => p === tr ? null : tr); setCoursePage(1); document.getElementById('course-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
+        onDayClick={handleDayClick}
+        onTimeClick={handleTimeClick}
       />
 
-      {/* 단과대 선택 시 상위 학과 표 */}
+      {/* 히트맵 + 수강률 이상 강좌 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <TimetableGrid data={timetableGrid} loading={coursesLoading} />
+        <EnrollmentAlerts
+          overEnrolled={enrollmentAlerts.overEnrolled}
+          overTotal={enrollmentAlerts.overTotal}
+          underEnrolled={enrollmentAlerts.underEnrolled}
+          underTotal={enrollmentAlerts.underTotal}
+          loading={coursesLoading}
+        />
+      </div>
+
+      {/* 단과대 선택 시 상위 학과 */}
       {selectedCollege && !selectedDepartment && (
         <CollegeTopDepts
           college={selectedCollege}
           data={topDepts}
-          loading={topDeptsLoading}
+          loading={coursesLoading}
         />
       )}
 
-      {/* 주간 시간표 히트맵 + 수강률 이상 강좌 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <TimetableGrid data={timetableData} loading={timetableLoading} />
-        <EnrollmentAlerts
-          overEnrolled={alertsData.overEnrolled}
-          overTotal={alertsData.overTotal}
-          underEnrolled={alertsData.underEnrolled}
-          underTotal={alertsData.underTotal}
-          loading={alertsLoading}
-        />
-      </div>
+      {/* 대학별 요약 */}
+      <CollegeSummaryTable summary={collegeSummary} loading={coursesLoading} />
 
-      {/* College Summary Table */}
-      <CollegeSummaryTable summary={collegeSummary} loading={summaryLoading} />
-
-      {/* Detailed Course Table */}
+      {/* 상세 강좌 테이블 */}
       <div id="course-table-section">
-      {(categoryFilter || dayFilter || timeFilter) && (
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <span className="text-sm text-slate-500">필터:</span>
-          {categoryFilter && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
-              이수구분 · {categoryFilter}
-              <button onClick={() => { setCategoryFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70 transition-opacity">✕</button>
-            </span>
-          )}
-          {dayFilter && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
-              요일 · {dayFilter}요일
-              <button onClick={() => { setDayFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70 transition-opacity">✕</button>
-            </span>
-          )}
-          {timeFilter && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
-              시간대 · {timeFilter}
-              <button onClick={() => { setTimeFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70 transition-opacity">✕</button>
-            </span>
-          )}
-          <span className="text-xs text-slate-400">총 {totalCoursesCount}개 강좌</span>
-          <button onClick={() => { setCategoryFilter(null); setDayFilter(null); setTimeFilter(null); setCoursePage(1) }} className="text-xs text-slate-400 hover:text-red-400 transition-colors underline">
-            전체 해제
-          </button>
-        </div>
-      )}
-      <CourseTable
-        courses={courses}
-        totalCount={totalCoursesCount}
-        page={coursePage}
-        pageSize={10}
-        search={courseSearch}
-        onPageChange={setCoursePage}
-        onSearchChange={setCourseSearch}
-        loading={tableLoading}
-      />
+        {(categoryFilter || dayFilter || timeFilter) && (
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="text-sm text-slate-500">필터:</span>
+            {categoryFilter && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
+                이수구분 · {categoryFilter}
+                <button onClick={() => { setCategoryFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70">✕</button>
+              </span>
+            )}
+            {dayFilter && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
+                요일 · {dayFilter}요일
+                <button onClick={() => { setDayFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70">✕</button>
+              </span>
+            )}
+            {timeFilter && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#003087] text-white">
+                시간대 · {timeFilter}
+                <button onClick={() => { setTimeFilter(null); setCoursePage(1) }} className="ml-1 hover:opacity-70">✕</button>
+              </span>
+            )}
+            <span className="text-xs text-slate-400">총 {totalCoursesCount}개 강좌</span>
+            <button
+              onClick={() => { setCategoryFilter(null); setDayFilter(null); setTimeFilter(null); setCoursePage(1) }}
+              className="text-xs text-slate-400 hover:text-red-400 transition-colors underline"
+            >
+              전체 해제
+            </button>
+          </div>
+        )}
+        <CourseTable
+          courses={courses}
+          totalCount={totalCoursesCount}
+          page={coursePage}
+          pageSize={PAGE_SIZE}
+          search={courseSearch}
+          onPageChange={setCoursePage}
+          onSearchChange={(s) => { setCourseSearch(s); setCoursePage(1) }}
+          loading={coursesLoading}
+        />
       </div>
     </div>
   )
