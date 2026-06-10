@@ -10,7 +10,7 @@
 인천대학교 2026-1학기 전체 교과목 대시보드.
 
 ## 기술 스택 (고정)
-- Next.js 14 (App Router) + TypeScript
+- Next.js 16 (App Router) + TypeScript
 - Supabase (PostgreSQL) — DB/백엔드
 - Tailwind CSS + shadcn/ui
 - Recharts (모든 그래프는 인터랙티브 툴팁 필수)
@@ -20,36 +20,75 @@
 
 ## 환경변수 규칙 (중요)
 - `NEXT_PUBLIC_SUPABASE_URL` — API URL에서 `/rest/v1/` 제거한 base 도메인만 사용
-  예) `https://xxxx.supabase.co/rest/v1/` → `https://xxxx.supabase.co`
+  예) `https://xxxx.supabase.co`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — anon public key 사용
-- `GEMINI_API_KEY` — Google AI Studio에서 발급한 키 (서버사이드 전용, NEXT_PUBLIC_ 붙이지 말 것)
+- `GEMINI_API_KEY` — Google AI Studio 발급 키 (서버사이드 전용, `NEXT_PUBLIC_` 붙이지 말 것)
 - 모든 키는 `.env.local` 에 저장, 하드코딩 금지
 
 ## Supabase 패키지
 - `@supabase/supabase-js` (핵심 클라이언트)
-- `@supabase/ssr` (App Router 서버사이드 세션/페칭)
+- `@supabase/ssr` (App Router 서버사이드)
 
-## Supabase 테이블 및 보안 정책 규칙 (중요)
-테이블을 생성하거나 액세스할 때 아래 사항을 항상 적용한다.
+## ⚠️ Supabase PostgREST 제약사항 (절대 무시 금지)
+Supabase PostgREST는 컬럼명에 괄호가 포함된 경우 (`대학(원)`, `학과(부)`, `시간표(교시)` 등)
+임베디드 리소스 문법으로 해석하여 **필터 쿼리가 오류를 일으킨다.**
 
-1. **명시적인 권한 부여 (GRANT SQL)**:
-   ```sql
-   GRANT SELECT ON TABLE 테이블명 TO anon, authenticated;
-   ```
+**해결책: 항상 `select('*')`로 전체 행을 가져온 뒤 JavaScript에서 필터링한다.**
+절대 `.eq('대학(원)', value)` 형태의 PostgREST 필터를 사용하지 말 것.
 
-2. **행 레벨 보안 (RLS) 활성화 + 공개 읽기 정책**:
-   강좌 데이터는 공개 읽기이므로 아래와 같이 설정한다.
-   ```sql
-   ALTER TABLE courses ENABLE ROW LEVEL SECURITY;
-   CREATE POLICY "공개 읽기 허용" ON courses FOR SELECT TO anon, authenticated USING (true);
-   ```
+## ⚠️ Supabase DB 실제 컬럼값 매핑 (중요)
+CSV 임포트 결과 일부 대학의 `대학(원)` 컬럼값이 표시명과 다르다. **반드시 아래 매핑을 사용하라:**
+
+| 사이드바 표시명 | DB 실제 `대학(원)` 값 |
+|---|---|
+| 기초교육원 | `교양` |
+| 글로벌경영대학 | `글로벌정경대학` |
+| 동북아국제통상물류학부 | `단과대구분없음` |
+| 법학부 | `단과대구분없음(법학)` |
+| 그 외 대학 | 표시명과 동일 |
+
+`lib/data.ts`의 `DISPLAY_TO_DB_COLLEGES`와 `DB_TO_DISPLAY` 맵을 항상 이 기준으로 유지할 것.
+
+## ⚠️ 데이터 페칭 구조 (성능 최적화 — 변경 금지)
+`lib/data.ts`에 `getAllDashboardData(college?, department?)` 함수가 있다.
+이 함수는 `fetchFilteredCourses`를 **단 1회** 호출한 뒤 모든 메트릭(통계, 차트, 히트맵, 수강률 이상 강좌)을
+JavaScript에서 한 번에 계산하여 반환한다.
+
+`page.tsx`에서 개별 함수(`getStats`, `getCoursesByCategory` 등)를 따로 호출하지 말 것.
+모든 메트릭은 `getAllDashboardData` 단일 호출로 처리한다.
+(예외: `getCollegeSummary`, `getCourses`(페이지네이션 테이블), `getTopDeptsByCollege`는 별도 호출)
+
+## ⚠️ React Rules of Hooks (절대 준수)
+- 훅(`useState`, `useEffect`, `useCountUp` 등)은 **컴포넌트 최상단**에서 항상 호출해야 한다.
+- `if (...) { return ... }` 조건부 early return **이후**에 훅을 호출하면 런타임 에러 발생.
+- 데이터가 null일 때는 훅에 `0` 또는 기본값을 전달하고, early return은 훅 호출 이후에 배치할 것.
+
+## Supabase 테이블 및 보안 정책 규칙
+테이블 생성/액세스 시 항상 적용:
+```sql
+GRANT SELECT ON TABLE 테이블명 TO anon, authenticated;
+ALTER TABLE courses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "공개 읽기 허용" ON courses FOR SELECT TO anon, authenticated USING (true);
+```
 
 ## 공통 규칙
 - 모듈화·재사용 컴포넌트 우선, 타입 안정성 확보
 - 한국어 UI
-- 데이터 페칭은 서버 컴포넌트 우선, 인터랙션 차트만 클라이언트 컴포넌트
 - 작업 전 현재 디렉토리/파일 구조를 먼저 확인하고 진행
 - **각 Phase 완료 시 "✅ Phase N 완료" + 변경 파일 목록 보고, 내 확인 전까지 다음 단계 진행 금지**
+
+## INU 브랜드 컬러 (고정 — 임의 변경 금지)
+| 변수 | HEX | 용도 |
+|---|---|---|
+| INU Blue | `#003087` | 헤더, 사이드바, 주요 강조, 차트 기본색 |
+| INU Blue 진하게 | `#00256b` | 푸터, 어두운 배경 |
+| INU Blue 연하게 | `#e8eef7` | 선택 항목 배경 |
+| INU Yellow | `#ffa600` | AI 버튼, 차트 하이라이트, 강조 포인트 |
+
+## Gemini AI 모델 (고정)
+- 코드에서 사용하는 모델 ID: `gemini-3.1-flash-lite`
+- UI 및 보고서 헤더에 표시하는 이름: `Gemini 3.1 Flash-Lite`
+- 변경하지 말 것
 
 ## 대학 사이드바 순서 (고정 — 반드시 이 순서 준수)
 1. 대학전체
@@ -69,6 +108,37 @@
 15. 동북아국제통상물류학부
 16. 법학부
 
+## 현재 컴포넌트 목록 (기존 파일 수정 시 참고)
+```
+components/
+  AIAnalysisModal.tsx     — Gemini AI 분석 모달 (다운로드 포함)
+  CategoryCharts.tsx      — 이수구분별 차트 (클릭 필터 연동)
+  CollegeSummaryTable.tsx — 대학별 요약 테이블
+  CollegeTopDepts.tsx     — 단과대 선택 시 상위 학과 테이블
+  CourseTable.tsx         — 상세 강좌 테이블 (검색, 페이지네이션)
+  DistributionCharts.tsx  — 수업방법·학점 도넛 차트
+  EnrollmentAlerts.tsx    — 수강률 이상 강좌 알림 (정원초과/저조)
+  Footer.tsx
+  Header.tsx              — 브레드크럼 + AI 버튼
+  Sidebar.tsx             — 대학/학과 네비게이션
+  StatsCards.tsx          — 통계 카드 4개 (카운트업 애니메이션)
+  TimeCharts.tsx          — 요일·시간대 차트 (클릭 필터 연동)
+  TimetableGrid.tsx       — 주간 시간표 히트맵
+hooks/
+  useCountUp.ts           — 숫자 카운트업 애니메이션 (easeOutQuart)
+```
+
+## Course 타입 실제 컬럼 구조 (types/index.ts 기준)
+CSV 임포트 시 컬럼명이 한글+괄호 형태로 그대로 저장된다. 아래가 실제 필드명이다:
+```ts
+"순번", "학기", "대학(원)", "학과(부)", "학년", "이수구분", "이수영역",
+"학수번호", "교과목명", "교과목명(영문)", "담당교수", "소속", "강의실",
+"시간표(교시)", "시간표(시간)", "교시유형", "학점", "시수", "이론", "실습",
+"정원", "수강", "수강(남)", "수강(여)", "재수강", "수업구분", "수업유형",
+"집중이수제", "성적평가", "원어강의", "원어강의구분", "원어강사료지급",
+"캡스톤디자인", "수강대상", "수업방법", "비고"
+```
+
 ## 데이터 검증 기준
 - CSV 임포트 후 총 행 수: **2,313개** (일부 에러 행 제외된 결과)
 
@@ -86,374 +156,282 @@
 
 ---
 
-## ▶ PHASE 0 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 0 프롬프트
 
 ```
 Phase 0: 패키지 설치 및 환경 설정
 
-현재 디렉토리 구조와 package.json을 먼저 확인하고, 아래 작업을 순서대로 진행해라.
+현재 디렉토리 구조와 package.json을 먼저 확인하고 아래 작업을 순서대로 진행해라.
 
 1. 다음 패키지를 설치하라:
    - recharts @types/recharts
    - @google/generative-ai
    - lucide-react
-   - clsx tailwind-merge
-   - class-variance-authority
+   - clsx tailwind-merge class-variance-authority
 
-2. shadcn/ui를 초기화하고 아래 컴포넌트를 설치하라:
-   npx shadcn@latest init (설정: TypeScript, tailwind, app router, src 없음)
-   npx shadcn@latest add button card table badge skeleton dialog breadcrumb scroll-area separator tooltip
+2. shadcn/ui 초기화 및 컴포넌트 설치:
+   npx shadcn@latest init
+   npx shadcn@latest add button card table badge skeleton dialog breadcrumb scroll-area separator tooltip input
 
-3. .env.local 파일이 있는지 확인하라. 없으면 아래 내용으로 생성하라:
-   ```
+3. .env.local 파일 확인. 없으면 생성하고 안내:
    NEXT_PUBLIC_SUPABASE_URL=여기에_입력
    NEXT_PUBLIC_SUPABASE_ANON_KEY=여기에_입력
    GEMINI_API_KEY=여기에_입력
-   ```
-   파일 생성 후 "환경변수 3개를 .env.local에 설정해주세요" 라고 안내하라.
 
-4. next.config.ts에 이미지 도메인 설정이 없으면 기본 설정을 유지하라.
-
-5. lib/utils.ts 파일이 없으면 shadcn 표준 cn 유틸리티로 생성하라:
-   ```ts
-   import { clsx, type ClassValue } from "clsx"
-   import { twMerge } from "tailwind-merge"
-   export function cn(...inputs: ClassValue[]) {
-     return twMerge(clsx(inputs))
-   }
-   ```
+4. lib/utils.ts에 shadcn 표준 cn() 유틸리티 생성 (없는 경우).
 
 완료 후 "✅ Phase 0 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 1 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 1 프롬프트
 
 ```
 Phase 1: Supabase 테이블 생성 & 데이터 검증
 
-.env.local의 NEXT_PUBLIC_SUPABASE_URL과 NEXT_PUBLIC_SUPABASE_ANON_KEY를 확인하고 아래 작업을 진행하라.
+중요: PostgREST는 괄호가 포함된 컬럼명을 필터에 사용할 수 없다.
+항상 select('*')로 전체 조회 후 JS에서 필터링할 것.
 
-1. 아래 SQL DDL을 Supabase SQL Editor에 실행할 수 있도록 제공하라.
-   (나는 이걸 Supabase Dashboard → SQL Editor에 직접 붙여넣고 실행할 것이다)
+1. Supabase SQL Editor에서 아래 SQL을 실행하라:
 
-```sql
--- 1. 테이블 생성
 CREATE TABLE IF NOT EXISTS courses (
-  id BIGSERIAL PRIMARY KEY,
-  대학 TEXT,
-  학부학과 TEXT,
-  이수구분 TEXT,
-  교과목코드 TEXT,
-  교과목명 TEXT,
-  분반 TEXT,
-  학점 INTEGER,
-  담당교수 TEXT,
-  수업방법 TEXT,
-  요일 TEXT,
-  시작시간 TEXT,
-  종료시간 TEXT,
-  강의실 TEXT,
-  수강정원 INTEGER,
-  수강인원 INTEGER,
-  원어강의 TEXT
+  id BIGSERIAL PRIMARY KEY
 );
-
--- 2. 권한 부여
 GRANT SELECT ON TABLE courses TO anon, authenticated;
-
--- 3. RLS 활성화 + 공개 읽기 정책
 ALTER TABLE courses ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "공개 읽기 허용" ON courses FOR SELECT TO anon, authenticated USING (true);
-```
 
-2. 위 SQL 실행 후, Supabase Dashboard → Table Editor에서 CSV 임포트 방법을 안내하라:
-   - 파일명: 종합강의시간표_1학기_전체.csv
-   - 임포트 후 총 행 수가 2,313개인지 확인할 것
+2. Supabase Dashboard → Table Editor에서 CSV(종합강의시간표_1학기_전체.csv) 임포트 후
+   행 수가 2,313개인지 확인하라.
 
-3. CSV 임포트 완료 후, Supabase 클라이언트로 실제 컬럼명을 확인하는 코드를 작성해서
-   `SELECT * FROM courses LIMIT 1` 결과를 출력하도록 임시 테스트 코드를 제공하라.
-   (컬럼명이 CSV 헤더와 다를 경우 다음 단계에서 쿼리를 수정할 것임)
+3. 임포트 후 SELECT * FROM courses LIMIT 1 로 실제 컬럼명을 확인하라.
+   컬럼명은 한글+괄호 형태(예: 대학(원), 학과(부), 시간표(교시))로 저장될 수 있다.
 
-4. types/index.ts를 생성하고 Course 타입을 정의하라 (컬럼명은 실제 Supabase 테이블 기준으로):
-   ```ts
-   export interface Course {
-     id: number
-     대학: string
-     학부학과: string
-     이수구분: string
-     교과목코드: string
-     교과목명: string
-     분반: string
-     학점: number
-     담당교수: string
-     수업방법: string
-     요일: string
-     시작시간: string
-     종료시간: string
-     강의실: string
-     수강정원: number
-     수강인원: number
-     원어강의: string
-   }
-   ```
+4. types/index.ts에 실제 컬럼명 기준으로 Course 인터페이스를 정의하라.
+   AGENTS.md의 "Course 타입 실제 컬럼 구조" 섹션을 참고하라.
+
+5. lib/supabase/client.ts (브라우저용), lib/supabase/server.ts (서버용) 생성.
 
 완료 후 "✅ Phase 1 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 2 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 2 프롬프트
 
 ```
 Phase 2: 전체 레이아웃 & 사이드바 & Context API
 
-현재 파일 구조를 먼저 확인하고 아래 작업을 진행하라.
+1. contexts/DashboardContext.tsx
+   - selectedCollege: string | null
+   - selectedDepartment: string | null
+   - setter: setSelectedCollege (college 변경 시 department 자동 초기화), setSelectedDepartment
 
-1. Context API 생성: contexts/DashboardContext.tsx
-   - 선택된 대학(selectedCollege: string | null)
-   - 선택된 학과(selectedDepartment: string | null)
-   - setter 함수 포함
-   - "대학전체" 선택 시 전체 데이터 표시
+2. components/Sidebar.tsx
+   - AGENTS.md 대학 순서 엄수 (16개 항목)
+   - DB 컬럼값과 표시명이 다른 대학들은 AGENTS.md의 "DB 실제 컬럼값 매핑" 표를 참고하라:
+     교양→기초교육원, 글로벌정경대학→글로벌경영대학,
+     단과대구분없음→동북아국제통상물류학부, 단과대구분없음(법학)→법학부
+   - Supabase에서 select('*')로 전체 조회 후 JS에서 대학/학과 목록 추출 (PostgREST 제약 참고)
+   - 소속 학과 처음부터 모두 펼쳐진 상태 (요구사항)
+   - 선택 시 DashboardContext 업데이트, INU Blue 하이라이트
 
-2. 사이드바 컴포넌트: components/Sidebar.tsx
-   - AGENTS.md에 명시된 대학 순서를 반드시 준수하라:
-     대학전체, 기초교육원, 인문대학, 자연과학대학, 사회과학대학, 글로벌경영대학,
-     공과대학, 정보기술대학, 경영대학, 예술체육대학, 사범대학, 도시과학대학,
-     생명과학기술대학, 융합자유전공대학, 동북아국제통상물류학부, 법학부
-   - Supabase에서 각 대학의 학과 목록을 가져와 사이드바에 표시
-   - 모든 대학의 소속 학과가 처음부터 펼쳐진(expanded) 상태로 표시
-   - 클릭 시 DashboardContext 업데이트
-   - 선택된 항목 하이라이트 표시
-   - scroll-area 사용, 세로 스크롤 가능
+3. components/Header.tsx
+   - 상단 유틸리티바: INU Blue 배경, PORTAL·HOMEPAGE 링크
+   - 메인바: 제목, Breadcrumb (전체 > 대학 > 학과, 각 단계 클릭 시 해당 레벨로 이동)
+   - 우측: "AI 강의 분석" 버튼 (INU Yellow, hover 시 위로 살짝 뜨는 애니메이션)
 
-3. 헤더 컴포넌트: components/Header.tsx
-   - 좌측: "Incheon National University" 로고/텍스트
-   - Breadcrumb: 전체 > 선택된 대학 > 선택된 학과
-   - 우측: "AI 강의 분석" 버튼 (주황/살몬 계열 색상) — Phase 6에서 기능 연결
+4. components/Footer.tsx
+   - 배경: #00256b, 이름: 김종경
+   - 링크: 인천대학교 홈페이지 / INU 포털 / 이러닝
 
-4. 푸터 컴포넌트: components/Footer.tsx
-   - "Incheon National University Course Dashboard" 텍스트
-   - 링크: 인천대학교 홈페이지(https://www.inu.ac.kr) | INU 포털(https://portal.inu.ac.kr) | 이러닝(https://cyber.inu.ac.kr)
-   - "Designed & Developed by 김종경"
-   - "© 2026 Incheon National University"
-
-5. 대시보드 레이아웃: app/(dashboard)/layout.tsx
-   - DashboardProvider로 감싸기
-   - 좌측 사이드바(고정 너비 약 240px) + 우측 메인 영역
-   - Header, Footer 포함
-
-6. app/layout.tsx 에서 한국어 lang 속성으로 변경 (lang="ko")
-
-7. app/page.tsx 를 app/(dashboard)/page.tsx 로 이동 후 기존 기본 템플릿 내용 삭제,
-   대신 "대시보드 로딩 중..." 플레이스홀더로 대체 (Phase 3에서 실제 내용 채울 것)
-
-8. app/(dashboard)/layout.tsx가 실제 렌더링되도록 app/page.tsx에서 redirect 또는 직접 연결 처리
+5. app/(dashboard)/layout.tsx — DashboardProvider, 사이드바+메인 레이아웃, Header, Footer
+6. app/layout.tsx — lang="ko"
 
 완료 후 "✅ Phase 2 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 3 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 3 프롬프트
 
 ```
-Phase 3: 메인 통계 카드 + 이수구분 차트
+Phase 3: 데이터 레이어 + 통계 카드 + 이수구분 차트
 
-현재 파일 구조를 먼저 확인하고 아래 작업을 진행하라.
+중요: 모든 메트릭을 단일 fetch로 처리하는 getAllDashboardData 함수를 만든다.
+개별 함수(getStats 등)를 page.tsx에서 따로 호출하지 말 것.
 
-DashboardContext의 selectedCollege, selectedDepartment 값을 기반으로
-선택된 범위의 데이터만 필터링해서 표시해야 한다 (전체/대학/학과 연동).
+1. lib/data.ts ('use server') 작성:
 
-1. 서버 액션 또는 API 함수: lib/data.ts
-   아래 데이터를 Supabase에서 가져오는 함수를 작성하라:
-   - getStats(college?, department?) → { totalCourses, totalEnrollment, avgAttendanceRate, foreignLectureRate }
-   - getCoursesByCategory(college?, department?) → 이수구분별 강좌수 배열
-   - getAvgEnrollmentByCategory(college?, department?) → 이수구분별 평균 수강인원 배열
-   
-   수강률 계산: (수강인원 / 수강정원) * 100, 정원이 0인 경우 제외
-   원어강의 비율: 원어강의 컬럼 값이 'Y' 또는 '원어'인 행 수 / 전체 강좌수 * 100
+   [핵심 구조]
+   - fetchAllCourses(): 1,000개씩 페이지네이션하여 전체 조회 (select('*') 사용)
+   - fetchFilteredCourses(college?, department?): fetchAllCourses 후 JS에서 필터
+     (AGENTS.md DB 매핑 참고: 교양→기초교육원 등)
+   - getAllDashboardData(college?, department?): fetchFilteredCourses 1회 호출 후
+     아래 모든 결과를 한 번에 계산하여 반환:
+     { stats, categoryCounts, categoryAvgEnrollments, teachingMethods,
+       creditDistribution, coursesByDay, coursesByTime, timetableGrid, enrollmentAlerts }
+   - getCollegeSummary(): 대학별 요약 (전체 데이터 기준, AGENTS.md 순서)
+   - getCourses(college?, department?, page, pageSize, search, category?, day?, timeRange?):
+     페이지네이션 + 검색 + 다중 필터
 
-2. 통계 카드 컴포넌트: components/StatsCards.tsx (클라이언트 컴포넌트)
-   4개 카드 가로 배치:
-   - 총 강좌수 (아이콘: BookOpen)
-   - 총 수강인원 (아이콘: Users)
-   - 평균 수강률 (아이콘: TrendingUp, % 표시)
-   - 원어 강의 비율 (아이콘: Globe, % 표시)
-   각 카드: shadcn Card, 큰 숫자 폰트, 아이콘
+   수강률 계산: (수강 / 정원) * 100, 정원 0 제외
+   원어강의 비율: 원어강의 값이 'Y' 또는 '원어'인 행
 
-3. 이수구분 차트: components/CategoryCharts.tsx (클라이언트 컴포넌트)
-   가로 2분할 레이아웃:
-   - 좌: "이수구분별 강좌 수" — Recharts BarChart (수평 방향, 이수구분이 Y축)
-   - 우: "이수구분별 평균 수강인원" — Recharts BarChart (수평 방향)
-   두 차트 모두 Tooltip 필수 (마우스 오버 시 구체적 수치 표시)
-   색상: 연한 파란계열 그라데이션 또는 단색
+2. hooks/useCountUp.ts 생성 (easeOutQuart, requestAnimationFrame)
 
-4. app/(dashboard)/page.tsx 에 StatsCards와 CategoryCharts 배치
-   - 상단: "전체 교과목 대시보드" (또는 선택된 대학/학과명) 제목 + 부제목
-   - 다음 줄: StatsCards
-   - 다음 줄: CategoryCharts
+3. components/StatsCards.tsx
+   - useCountUp 훅 4개는 컴포넌트 최상단에서 호출 (React Rules of Hooks 엄수)
+   - stats가 null이면 0 전달, early return은 훅 호출 이후에 배치
+   - 4개 카드: 총 강좌수, 총 수강인원, 평균 수강률, 원어 강의 비율
+   - 아이콘 배경: INU Blue (#003087), 좌측 border: 4px solid INU Blue
+
+4. components/CategoryCharts.tsx
+   - 수평 BarChart 2개 (이수구분별 강좌수, 이수구분별 평균 수강인원)
+   - 최댓값 막대는 INU Yellow (#ffa600) 강조
+   - activeCategory prop 받아서 클릭된 항목 하이라이트 (opacity 0.4로 비활성 처리)
+   - onCategoryClick prop: onClick={(data: any) => onCategoryClick?.(data.category ?? data.payload?.category)}
+
+5. app/(dashboard)/page.tsx
+   - 'use client', DashboardContext 사용
+   - getAllDashboardData 단일 호출로 모든 메트릭 로드
+   - categoryFilter, dayFilter, timeFilter state 관리
+   - 제목: 선택된 대학/학과에 따라 동적 변경
 
 완료 후 "✅ Phase 3 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 4 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 4 프롬프트
 
 ```
 Phase 4: 수업방법·학점 도넛 차트 + 요일·시간 바 차트
 
-현재 파일 구조를 먼저 확인하고 아래 작업을 진행하라.
+(getAllDashboardData가 이미 teachingMethods, creditDistribution,
+coursesByDay, coursesByTime를 반환하므로 별도 data.ts 함수 추가 불필요)
 
-1. lib/data.ts에 아래 함수를 추가하라:
-   - getTeachingMethods(college?, department?) → 수업방법별 강좌수 배열
-   - getCreditDistribution(college?, department?) → 학점별 강좌수 배열
-   - getCoursesByDay(college?, department?) → 요일별 강좌수 배열 (월·화·수·목·금·토 순서)
-   - getCoursesByTime(college?, department?) → 시간대별 강좌수 배열
-     (시간대 그룹: 9시 이전, 09:00-10:59, 11:00-12:59, 13:00-14:59, 15:00-16:59, 17:00 이후)
+1. components/DistributionCharts.tsx
+   - 도넛 PieChart 2개 (수업방법 유형 분포, 학점 구성 비율)
+   - 범례 우측 배치, 비율 % 표시
+   - Tooltip: contentStyle 배경 #1e293b, itemStyle color #f1f5f9로 가독성 확보
+   - formatter: (value, _, entry) => [값, entry.name] 형태로 항목명 표시
 
-2. 수업방법·학점 차트: components/DistributionCharts.tsx (클라이언트 컴포넌트)
-   가로 2분할:
-   - 좌: "수업방법 유형 분포" — Recharts PieChart (도넛형, 범례 우측 배치, 비율 % 표시)
-   - 우: "학점 구성 비율" — Recharts PieChart (도넛형, 범례 우측 배치)
-   두 차트 모두 Tooltip 필수
+2. components/TimeCharts.tsx
+   - 수평 BarChart 2개 (요일별 강좌수, 시간대별 강좌수)
+   - 최댓값 막대 INU Yellow 강조
+   - activeDay, activeTime prop: 클릭된 항목 하이라이트, 나머지 opacity 0.4
+   - onDayClick: onClick={(data: any) => onDayClick?.(data.day ?? data.payload?.day)}
+   - onTimeClick: onClick={(data: any) => onTimeClick?.(data.timeRange ?? data.payload?.timeRange)}
 
-3. 요일·시간 차트: components/TimeCharts.tsx (클라이언트 컴포넌트)
-   가로 2분할:
-   - 좌: "요일별 수업 강좌 수" — Recharts BarChart (수평 방향, 요일이 Y축)
-   - 우: "수업 시간별 강좌 수" — Recharts BarChart (수평 방향, 시간대가 Y축)
-   두 차트 모두 Tooltip 필수
-   색상: 노란/골드 계열 (이수구분 차트와 색상 차별화)
-
-4. app/(dashboard)/page.tsx에 DistributionCharts와 TimeCharts를 Phase 3 차트 아래에 추가
+3. page.tsx에 DistributionCharts, TimeCharts 추가
+   - dayFilter, timeFilter 연결
+   - 필터 칩: INU Blue (#003087) 배경, ✕ 버튼, "전체 해제" 링크
 
 완료 후 "✅ Phase 4 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 5 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 5 프롬프트
 
 ```
-Phase 5: 대학별 분석 요약 테이블 + 상세 강좌 정보 테이블
+Phase 5: 대학별 요약 테이블 + 상세 강좌 테이블 + 추가 컴포넌트
 
-현재 파일 구조를 먼저 확인하고 아래 작업을 진행하라.
+1. components/CollegeSummaryTable.tsx
+   - 컬럼: 대학명 | 강좌 수 | 수강인원 합계 | 평균 수강률(%)
+   - 헤더: INU Blue 배경, 흰색 텍스트
+   - 수강률 기준 Badge 색상: ≥90% green, 75-89% blue, 50-74% amber, <50% red
 
-1. lib/data.ts에 아래 함수를 추가하라:
-   - getCollegeSummary() → 대학별 { 대학명, 강좌수, 수강인원합계, 평균수강률 } 배열
-     AGENTS.md 대학 순서와 동일하게 정렬
-   - getCourses(college?, department?, page, pageSize) → 페이지네이션된 강좌 목록 + 총 개수
+2. components/CourseTable.tsx
+   - 컬럼: 대학 | 학과 | 교과목명 | 이수구분 | 학점 | 담당교수 | 요일/시간 | 수강/정원 | 수강률
+   - 수업방법 컬럼은 포함하지 말 것 (거의 미지정이라 제외됨)
+   - 10개씩 페이지네이션, 교과목명/교수/학수번호 검색 (debounce 300ms)
+   - loading && hasLoadedOnce 시 opacity-50으로 stale 데이터 유지 (스켈레톤 재표시 금지)
 
-2. 대학별 요약 테이블: components/CollegeSummaryTable.tsx (클라이언트 컴포넌트)
-   shadcn Table 사용, 컬럼:
-   - 대학명 | 강좌 수 | 수강인원 합계 | 평균 수강률(%)
-   평균 수강률을 기준으로 높을수록 진한 색 Badge 또는 셀 배경 강조
-   
-3. 상세 강좌 정보 테이블: components/CourseTable.tsx (클라이언트 컴포넌트)
-   shadcn Table + 페이지네이션 (10개씩)
-   컬럼: 대학 | 학과 | 교과목명 | 이수구분 | 학점 | 담당교수 | 수업방법 | 요일/시간 | 수강/정원 | 수강률(%)
-   - 상단에 검색창 (교과목명 검색)
-   - 우측 상단에 총 N개 표시
-   - 페이지네이션: 이전/다음 버튼 + 현재 페이지/전체 페이지
+3. components/CollegeTopDepts.tsx
+   - 단과대 선택 시 (학과 미선택) 표시: "[대학명] 강좌 수 상위 학과"
+   - 컬럼: 순위 | 학과(부) | 강좌 수 | 수강인원 합계 | 평균 수강률(%)
+   - 헤더 INU Blue, getTopDeptsByCollege(college, 10) 호출
 
-4. app/(dashboard)/page.tsx에 CollegeSummaryTable과 CourseTable을 최하단에 추가
-   - 각각 섹션 제목 포함: "대학(원)별 강좌 분석 요약", "상세 강좌 정보"
+4. components/TimetableGrid.tsx
+   - 월~금 × 9시~20시 히트맵 (INU Blue 계열 강도)
+   - 각 셀: 강좌 수 숫자 표시, hover 시 툴팁
+   - 우상단 범례
+   - hasLoadedOnce 패턴으로 백그라운드 로딩
+
+5. components/EnrollmentAlerts.tsx
+   - 정원 초과(>100%) / 수강 저조(<50%) 탭 구성
+   - 전체 목록 스크롤 (limit 없음, maxHeight: 420px)
+   - 탭 버튼에 전체 개수 뱃지
+   - hasLoadedOnce 패턴으로 백그라운드 로딩
+
+6. page.tsx 배치 순서:
+   StatsCards → CategoryCharts → DistributionCharts → TimeCharts
+   → [히트맵 + 수강률 알림 lg:grid-cols-2]
+   → CollegeTopDepts (단과대 선택 시만)
+   → CollegeSummaryTable → CourseTable
 
 완료 후 "✅ Phase 5 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 6 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 6 프롬프트
 
 ```
 Phase 6: AI 강의 분석 기능 (Gemini API)
 
-현재 파일 구조를 먼저 확인하고 아래 작업을 진행하라.
-
-1. API 라우트: app/api/ai-analysis/route.ts
-   - POST 요청으로 { college, department } 수신
-   - Supabase에서 해당 대학/학과의 강좌 통계 데이터를 가져옴:
-     총 강좌수, 총 수강인원, 평균 수강률, 원어 강의 비율,
-     이수구분별 강좌수, 수업방법 분포, 학점 분포, 요일별 강좌수
-   - GEMINI_API_KEY로 @google/generative-ai 클라이언트 생성
-   - 모델: gemini-2.0-flash-lite (UI에는 "Gemini 2.0 Flash-Lite"로 표시)
-   - 아래 형식의 프롬프트로 분석 요청:
-     ```
-     당신은 대학 교육과정 분석 전문가입니다.
-     아래는 인천대학교 2026학년도 1학기 [대학/학과명]의 강좌 운영 현황 데이터입니다.
-     [통계 데이터 JSON]
-     
-     다음 형식으로 종합 분석 보고서를 작성해주세요:
-     1. 데이터 요약 (주요 수치)
-     2. 주요 특징 및 트렌드 분석
-     3. 문제점 및 개선 아이디어 제언
-     
-     보고서 상단에 아래 헤더를 포함해주세요:
+1. app/api/ai-analysis/route.ts
+   - POST { college, department } 수신
+   - getStats, getCoursesByCategory, getTeachingMethods, getCreditDistribution,
+     getCoursesByDay 호출하여 통계 데이터 수집
+   - 모델: gemini-3.1-flash-lite (UI 표시명도 "Gemini 3.1 Flash-Lite")
+   - 보고서 형식: 데이터 요약 / 주요 특징 및 트렌드 분석 / 문제점 및 개선 제언
+   - 보고서 상단 헤더:
      === AI 강의 데이터 분석 보고서 ===
-     분석 대상: [대학/학과명]
+     분석 대상: [대상명]
      일자: [현재 날짜]
-     작성 모델: Gemini 2.0 Flash-Lite
-     ```
-   - 응답: { analysis: string } JSON 반환
-   - 에러 처리 포함 (API 키 없음, 요청 실패 등)
+     작성 모델: Gemini 3.1 Flash-Lite
+   - 응답: { analysis: string }
+   - 에러 처리: API 키 없음, 429 quota 초과 (재시도 안내)
 
-2. AI 분석 모달: components/AIAnalysisModal.tsx (클라이언트 컴포넌트)
-   shadcn Dialog 사용:
-   - 제목: "AI 강의 데이터 종합 분석"
-   - 로딩 상태: 스피너 + "Gemini 2.0 Flash-Lite 모델이 데이터를 분석 중입니다..."
-   - 분석 완료: 결과 텍스트를 마크다운 형식으로 pre 태그 또는 whitespace-pre-wrap 스타일로 표시 (스크롤 가능)
-   - 하단 버튼:
-     - "분석 결과 다운로드" 버튼: 결과를 .md 파일로 다운로드 (파일명: AI_분석_[대학/학과명]_2026-1학기.md)
-     - "닫기" 버튼
-   - X 버튼으로 닫기 가능
+2. components/AIAnalysisModal.tsx
+   - shadcn Dialog (max-w-5xl)
+   - 로딩: 스피너 + "Gemini 3.1 Flash-Lite 모델이 데이터를 분석 중입니다..."
+   - 결과: 마크다운 커스텀 렌더링 (h1~h3, 굵게, 목록, 구분선)
+   - 다운로드: .md 파일 (파일명: AI_분석_[대상명]_2026-1학기.md)
+   - 모달 열릴 때 자동으로 API 호출 시작
 
-3. Header.tsx의 "AI 강의 분석" 버튼에 AIAnalysisModal 연결
-   - 버튼 클릭 시 모달 열림
-   - 현재 선택된 대학/학과(DashboardContext)를 모달에 전달
-   - 모달 열릴 때 자동으로 분석 API 호출 시작
+3. Header.tsx의 AI 버튼에 모달 연결, DashboardContext의 선택 대학/학과 전달
 
 완료 후 "✅ Phase 6 완료" + 변경 파일 목록을 보고하라.
 ```
 
 ---
 
-## ▶ PHASE 7 프롬프트 (복사해서 채팅에 붙여넣기)
+## ▶ PHASE 7 프롬프트
 
 ```
 Phase 7: UI 마감 & Vercel 배포
 
-현재 파일 구조와 전체 동작 상태를 먼저 확인하고 아래 작업을 진행하라.
+1. 전체 점검:
+   - 페이지 제목 동적 변경 확인 (전체/대학/학과)
+   - 브레드크럼 클릭 동작 확인 (전체 클릭 → 초기화, 대학 클릭 → 학과만 해제)
+   - 모든 차트 툴팁 동작 확인
+   - 차트 클릭 → 테이블 필터 연동 확인
+   - Footer 이름(김종경), 링크 3개 확인
+   - 사이드바 소속 학과 모두 펼쳐진 상태 확인
 
-1. 전체 UI 점검 및 보완:
-   - app/(dashboard)/page.tsx 페이지 제목이 선택된 대학/학과에 따라 동적으로 변경되는지 확인
-     예) "전체 교과목 대시보드" / "공과대학 교과목 대시보드" / "컴퓨터공학부 교과목 대시보드"
-   - Breadcrumb이 "전체 > 공과대학 > 컴퓨터공학부" 형식으로 올바르게 표시되는지 확인
-   - 사이드바에서 대학/학과 선택 시 모든 차트와 테이블이 해당 데이터로 필터링되는지 확인
-   - 모든 차트에 인터랙티브 툴팁이 동작하는지 확인
-   - Footer의 링크 3개(인천대학교 홈페이지, INU 포털, 이러닝)가 올바르게 연결되었는지 확인
-   - Footer에 "김종경" 이름이 표시되는지 확인
+2. npx tsc --noEmit 실행, 에러 수정
 
-2. Loading 상태 처리:
-   - 각 차트/테이블 컴포넌트에 로딩 중일 때 shadcn Skeleton 표시
+3. Vercel 배포:
+   - GitHub 저장소 연동
+   - 환경변수 3개 설정: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, GEMINI_API_KEY
+   - 배포 후 URL 확인
 
-3. 반응형 레이아웃 최소 처리:
-   - 사이드바는 md 이상에서 표시, sm 이하에서 숨김 처리 (기본 기능 우선)
-
-4. TypeScript 에러 점검:
-   - npx tsc --noEmit 실행, 에러 있으면 수정
-
-5. Vercel 배포 준비:
-   - vercel.json이 없어도 Next.js 자동 감지되므로 별도 설정 불필요
-   - .env.local의 환경변수 3개를 Vercel Dashboard에 추가해야 함을 안내
-   - `npx vercel --prod` 또는 GitHub 연동 방법 안내
-
-6. README.md 업데이트:
-   - 프로젝트 설명, 기술 스택, 환경변수 설정 방법, 로컬 실행 방법 작성
-
-완료 후 "✅ Phase 7 완료" + 변경 파일 목록과 Vercel 배포 URL을 보고하라.
+완료 후 "✅ Phase 7 완료" + Vercel URL을 보고하라.
 ```
 
 ---
