@@ -4,8 +4,6 @@ import React from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BookOpen, Users, TrendingUp, Globe } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useCountUp } from '@/hooks/useCountUp'
-
 interface StatsCardsProps {
   stats: {
     totalCourses: number
@@ -17,12 +15,6 @@ interface StatsCardsProps {
 }
 
 export default function StatsCards({ stats, loading }: StatsCardsProps) {
-  // 훅은 항상 최상단에서 호출 (Rules of Hooks) — stats가 없으면 0으로 전달
-  const countCourses = useCountUp(stats?.totalCourses ?? 0, 1200, 0)
-  const countEnrollment = useCountUp(stats?.totalEnrollment ?? 0, 1500, 0)
-  const countAttendance = useCountUp(stats?.avgAttendanceRate ?? 0, 1000, 1)
-  const countForeign = useCountUp(stats?.foreignLectureRate ?? 0, 1000, 1)
-
   if (loading || !stats) {
     return (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -45,7 +37,7 @@ export default function StatsCards({ stats, loading }: StatsCardsProps) {
   const cardData = [
     {
       title: '총 강좌 수',
-      value: countCourses.toLocaleString() + '개',
+      value: stats.totalCourses.toLocaleString() + '개',
       icon: BookOpen,
       color: '#003087', // INU Blue
       bgColor: 'bg-[#003087]',
@@ -53,7 +45,7 @@ export default function StatsCards({ stats, loading }: StatsCardsProps) {
     },
     {
       title: '총 수강 인원',
-      value: countEnrollment.toLocaleString() + '명',
+      value: stats.totalEnrollment.toLocaleString() + '명',
       icon: Users,
       color: '#003087', // INU Blue
       bgColor: 'bg-[#003087]',
@@ -61,7 +53,7 @@ export default function StatsCards({ stats, loading }: StatsCardsProps) {
     },
     {
       title: '평균 수강률',
-      value: countAttendance.toFixed(1) + '%',
+      value: stats.avgAttendanceRate.toFixed(1) + '%',
       icon: TrendingUp,
       color: '#003087', // INU Blue
       bgColor: 'bg-[#003087]',
@@ -69,7 +61,7 @@ export default function StatsCards({ stats, loading }: StatsCardsProps) {
     },
     {
       title: '원어 강의 비율',
-      value: countForeign.toFixed(1) + '%',
+      value: stats.foreignLectureRate.toFixed(1) + '%',
       icon: Globe,
       color: '#003087',
       bgColor: 'bg-[#003087]',
