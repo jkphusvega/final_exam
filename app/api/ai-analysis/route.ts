@@ -46,6 +46,7 @@ export async function POST(request: Request) {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
+      timeZone: 'Asia/Seoul',
     })
 
     const prompt = `당신은 대학 교육과정 분석 전문가입니다.
