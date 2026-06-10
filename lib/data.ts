@@ -38,31 +38,35 @@ function matchesCollege(rawDbValue: string, displayName: string): boolean {
   return key === displayName
 }
 
-// Fetch every row from courses table (paginated, 1 000/page)
+// Fetch every row from courses table — 모든 페이지를 병렬로 요청
 async function fetchAllCourses(): Promise<Course[]> {
   const supabase = await createClient()
-  const all: Course[] = []
   const PAGE = 1000
-  let page = 0
 
-  while (true) {
-    const { data, error } = await supabase
-      .from('courses')
-      .select('*')
-      .range(page * PAGE, page * PAGE + PAGE - 1)
+  // 1) 총 행 수 확인 (head 요청 — 데이터 전송 없음)
+  const { count, error: countError } = await supabase
+    .from('courses')
+    .select('*', { count: 'exact', head: true })
 
-    if (error) {
-      console.error('[data.ts] fetchAllCourses error:', JSON.stringify(error))
-      break
-    }
-    if (!data || data.length === 0) break
-
-    all.push(...(data as unknown as Course[]))
-    if (data.length < PAGE) break
-    page++
+  if (countError || !count) {
+    console.error('[data.ts] count error:', countError)
+    return []
   }
 
-  console.log(`[data.ts] fetchAllCourses → ${all.length} rows (${page + 1} page(s))`)
+  const pages = Math.ceil(count / PAGE)
+
+  // 2) 모든 페이지를 동시에 요청 (순차 → 병렬)
+  const requests = Array.from({ length: pages }, (_, i) =>
+    supabase
+      .from('courses')
+      .select('*')
+      .range(i * PAGE, (i + 1) * PAGE - 1)
+  )
+
+  const results = await Promise.all(requests)
+  const all = results.flatMap(r => (r.data as unknown as Course[]) ?? [])
+
+  console.log(`[data.ts] fetchAllCourses → ${all.length} rows (${pages} parallel requests)`)
   return all
 }
 
