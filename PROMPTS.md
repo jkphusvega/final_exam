@@ -24,7 +24,7 @@ Supabase에서 새 프로젝트 생성 후 API URL, Publishable Key, Anon Key, S
 
 ### 환경변수 등록
 
-`.env.local` 파일을 만들고 아래 키를 등록:
+`.env.local` 파일을 만들고 아래 키를 등록 및 GEMINI_API_KEY 환경변수 추가:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=your_SUPABASE_URL
@@ -82,6 +82,8 @@ GEMINI_API_KEY=your_GEMINI_API_KEY
 ### CSV 데이터 임포트
 
 Supabase Dashboard → Table Editor에서 `종합강의시간표_1학기_전체.csv` 임포트.
+그대로 임포트하게 되면 '재수강' 컬럼을 제외한 모든 컬럼의 타입이 text로 임포트되어 2455개의 행이 그대로 임포트됨.
+따라서 '순번' 컬럼을 primary로 설정하고, '순번', '학점','시수','이론','실습','정원','수강','수강(남)','수강(여)','재수강' 컬럼의 타입을 int8으로 변경 후 임포트.
 임포트 후 총 행 수가 2,313개인지 확인.
 
 **주의:** Supabase PostgREST는 컬럼명에 괄호가 포함된 경우(예: 대학(원), 학과(부))
